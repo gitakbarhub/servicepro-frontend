@@ -1,9 +1,8 @@
 // ==================================================
-// SERVICEPRO FINAL SCRIPT.JS (Connected & Fixed)
+// SERVICEPRO SCRIPT.JS (With Cloud Admin Panel)
 // ==================================================
 
 // 1. CONFIGURATION
-// I have put your exact Replit URL here:
 const BASE_URL = 'https://0691fb63-24ec-4728-85ea-05b3b2145c59-00-3njhq9444p5wr.pike.replit.dev'; 
 
 const API_URL = `${BASE_URL}/api/shops`;
@@ -57,7 +56,7 @@ async function login(username, password) {
         }
     } catch (error) {
         console.error(error);
-        alert("Network Error: Replit might be asleep. Go to Replit and click Run.");
+        alert("Network Error: Is Replit Running?");
     }
 }
 
@@ -76,14 +75,11 @@ async function register(username, password, role, question, answer) {
             updateUIForUser();
             closeModal('registerModal');
             document.getElementById('registerForm').reset();
-            alert("Account created successfully!");
+            alert("Account created!");
         } else {
             alert(data.error || "Registration failed");
         }
-    } catch (error) {
-        console.error(error);
-        alert("Network Error: Could not register.");
-    }
+    } catch (error) { console.error(error); }
 }
 
 function logout() {
@@ -105,7 +101,6 @@ function checkLoginState() {
 async function fetchShops() {
     try {
         const response = await fetch(API_URL);
-        if (!response.ok) throw new Error("Failed to fetch");
         const shops = await response.json();
         
         markers.forEach(m => map.removeLayer(m));
@@ -117,11 +112,16 @@ async function fetchShops() {
                 <b>${shop.name}</b><br>
                 ${shop.service}<br>
                 ${shop.phone}<br>
-                ${currentUser && currentUser.id == shop.owner_id ? 
+                ${currentUser && (currentUser.role === 'admin' || currentUser.id == shop.owner_id) ? 
                 `<button onclick="deleteShop(${shop.id})" style="color:red">Delete</button>` : ''}
             `);
             markers.push(marker);
         });
+        
+        // Update Admin Count if open
+        const countSpan = document.getElementById('adminTotalShops');
+        if(countSpan) countSpan.innerText = shops.length;
+
     } catch (error) { console.error("Error loading shops:", error); }
 }
 
@@ -155,7 +155,55 @@ async function deleteShop(id) {
     fetchShops();
 }
 
-// 6. MAP CLICK & UI
+// 6. ADMIN PANEL LOGIC (NEW)
+async function openAdminPanel() {
+    if(!currentUser || currentUser.role !== 'admin') return alert("Access Denied");
+    
+    openModal('adminModal');
+    
+    // 1. Get Users Count
+    try {
+        const res = await fetch(`${AUTH_URL}/users`);
+        const users = await res.json();
+        document.getElementById('adminTotalUsers').innerText = users.length;
+        
+        // Setup User List Click
+        document.getElementById('statUsers').onclick = () => renderAdminUserList(users);
+    } catch(e) { console.error(e); }
+    
+    // 2. Shops Count
+    fetchShops(); // Refresh shops to get count
+}
+
+function renderAdminUserList(users) {
+    const container = document.getElementById('adminListContainer');
+    const section = document.getElementById('adminListSection');
+    section.style.display = 'block';
+    container.innerHTML = '';
+    
+    users.forEach(user => {
+        const div = document.createElement('div');
+        div.style.padding = "10px";
+        div.style.borderBottom = "1px solid #ccc";
+        div.style.display = "flex";
+        div.style.justifyContent = "space-between";
+        
+        div.innerHTML = `
+            <span><b>${user.username}</b> (${user.role})</span>
+            ${user.username !== 'admin' ? 
+            `<button onclick="deleteUser(${user.id})" style="background:red; color:white; border:none; padding:5px;">Delete</button>` : ''}
+        `;
+        container.appendChild(div);
+    });
+}
+
+async function deleteUser(id) {
+    if(!confirm("Delete this user?")) return;
+    await fetch(`${AUTH_URL}/users/${id}`, { method: 'DELETE' });
+    openAdminPanel(); // Refresh
+}
+
+// 7. UI HELPER FUNCTIONS
 function onMapClick(e) {
     if (!currentUser || (currentUser.role !== 'provider' && currentUser.role !== 'admin')) return;
     
@@ -165,7 +213,6 @@ function onMapClick(e) {
     if (tempMarker) map.removeLayer(tempMarker);
     tempMarker = L.marker([lat, lng]).addTo(map).bindPopup("New Location").openPopup();
     
-    // FILLING THE CORRECT HTML INPUTS
     const latInput = document.getElementById('inputLat'); 
     const lngInput = document.getElementById('inputLng'); 
     if(latInput) latInput.value = lat;
@@ -179,75 +226,64 @@ function updateUIForUser() {
     const loggedInView = document.getElementById('loggedInView');
     const welcomeUser = document.getElementById('welcomeUser');
     const addBtn = document.getElementById('addProviderBtn');
+    const adminBtn = document.getElementById('adminPanelBtn');
 
     if (currentUser) {
-        if(loggedOutView) loggedOutView.style.display = 'none';
-        if(loggedInView) loggedInView.style.display = 'block';
-        if(welcomeUser) welcomeUser.innerText = `Hi, ${currentUser.username}`;
+        loggedOutView.style.display = 'none';
+        loggedInView.style.display = 'block';
+        welcomeUser.innerText = `Hi, ${currentUser.username}`;
         
-        if (addBtn) {
-            addBtn.style.display = (currentUser.role === 'provider' || currentUser.role === 'admin') ? 'inline-block' : 'none';
-        }
+        // Show Add Shop for Provider/Admin
+        if (addBtn) addBtn.style.display = (currentUser.role === 'provider' || currentUser.role === 'admin') ? 'inline-block' : 'none';
+        
+        // Show Admin Panel Button for Admin
+        if (adminBtn) adminBtn.style.display = (currentUser.role === 'admin') ? 'inline-block' : 'none';
+        
     } else {
-        if(loggedOutView) loggedOutView.style.display = 'block';
-        if(loggedInView) loggedInView.style.display = 'none';
+        loggedOutView.style.display = 'block';
+        loggedInView.style.display = 'none';
         if(addBtn) addBtn.style.display = 'none';
+        if(adminBtn) adminBtn.style.display = 'none';
     }
 }
 
-// 7. LISTENERS
 function setupEventListeners() {
-    // Nav Buttons
-    const loginBtn = document.getElementById('loginBtnNav');
-    const regBtn = document.getElementById('registerBtnNav');
-    const logoutBtn = document.getElementById('logoutBtn');
+    document.getElementById('loginBtnNav').onclick = () => openModal('loginModal');
+    document.getElementById('registerBtnNav').onclick = () => openModal('registerModal');
+    document.getElementById('logoutBtn').onclick = logout;
     
-    if(loginBtn) loginBtn.onclick = () => openModal('loginModal');
-    if(regBtn) regBtn.onclick = () => openModal('registerModal');
-    if(logoutBtn) logoutBtn.onclick = logout;
+    // Admin Panel Button Listener
+    const adminBtn = document.getElementById('adminPanelBtn');
+    if(adminBtn) adminBtn.onclick = openAdminPanel;
 
-    // Close Modals
     document.querySelectorAll('.close').forEach(span => {
         span.onclick = function() { this.closest('.modal').style.display = 'none'; }
     });
 
-    // Login Submit
-    const loginForm = document.getElementById('loginForm');
-    if(loginForm) loginForm.onsubmit = (e) => {
+    document.getElementById('loginForm').onsubmit = (e) => {
         e.preventDefault();
-        const u = document.getElementById('loginUsername').value;
-        const p = document.getElementById('loginPassword').value;
-        login(u, p);
+        login(document.getElementById('loginUsername').value, document.getElementById('loginPassword').value);
     };
 
-    // Register Submit
-    const regForm = document.getElementById('registerForm');
-    if(regForm) regForm.onsubmit = (e) => {
+    document.getElementById('registerForm').onsubmit = (e) => {
         e.preventDefault();
-        const u = document.getElementById('regUsername').value;
-        const p = document.getElementById('regPassword').value;
-        const r = document.getElementById('regRole').value;
-        const q = document.getElementById('regQuestion').value;
-        const a = document.getElementById('regAnswer').value;
-        register(u, p, r, q, a);
+        register(document.getElementById('regUsername').value, document.getElementById('regPassword').value, document.getElementById('regRole').value, document.getElementById('regQuestion').value, document.getElementById('regAnswer').value);
     };
 
-    // Add Shop Submit
     const providerForm = document.getElementById('providerForm');
     if(providerForm) providerForm.onsubmit = (e) => {
         e.preventDefault();
-        const name = document.getElementById('providerName').value;
-        const service = document.getElementById('providerService').value;
-        const phone = document.getElementById('providerPhone').value;
-        const address = document.getElementById('providerAddress').value;
-        const desc = document.getElementById('providerDescription').value;
-        const lat = document.getElementById('inputLat').value;
-        const lng = document.getElementById('inputLng').value;
-
-        addShop(name, service, phone, address, desc, lat, lng);
+        addShop(
+            document.getElementById('providerName').value,
+            document.getElementById('providerService').value,
+            document.getElementById('providerPhone').value,
+            document.getElementById('providerAddress').value,
+            document.getElementById('providerDescription').value,
+            document.getElementById('inputLat').value,
+            document.getElementById('inputLng').value
+        );
     };
     
-    // Add Shop Button (Manual Click)
     const manualAddBtn = document.getElementById('addProviderBtn');
     if(manualAddBtn) manualAddBtn.onclick = () => {
          alert("Click the map to pick a location!");
@@ -263,3 +299,8 @@ function closeModal(id) {
     const el = document.getElementById(id);
     if(el) el.style.display = 'none';
 }
+
+// Global functions for HTML onclicks
+window.deleteShop = deleteShop;
+window.deleteUser = deleteUser;
+window.renderAdminUserList = renderAdminUserList;
