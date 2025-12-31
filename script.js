@@ -1,40 +1,73 @@
 // ==================================================
-// SERVICEPRO SCRIPT.JS (With Cloud Admin Panel)
+// SERVICEPRO COMPLETE SCRIPT (Cloud DB + All UI Features)
 // ==================================================
 
-// 1. CONFIGURATION
-const BASE_URL = 'https://0691fb63-24ec-4728-85ea-05b3b2145c59-00-3njhq9444p5wr.pike.replit.dev'; 
-
+// --- 1. CONFIGURATION ---
+const BASE_URL = 'https://0691fb63-24ec-4728-85ea-05b3b2145c59-00-3njhq9444p5wr.pike.replit.dev';
 const API_URL = `${BASE_URL}/api/shops`;
-const AUTH_URL = `${BASE_URL}/api`; 
+const AUTH_URL = `${BASE_URL}/api`;
 
 const DEFAULT_CENTER = { lat: 31.4880, lng: 74.3430 }; // Lahore
 const CURRENT_USER_KEY = 'serviceCurrentUser';
+const MAX_ALLOWED_RADIUS_KM = 2.5;
 
-// 2. GLOBAL VARIABLES
+// --- 2. GLOBAL VARIABLES ---
 let map;
 let markers = [];
 let currentUser = null;
-let tempMarker = null; 
+let tempMarker = null;
+let satelliteLayer, osmLayer;
+let currentLayer = 'osm';
+let userLocation = null;
+let searchRadiusCircle = null;
+let isVoiceEnabled = false;
+let routingControl = null;
+let currentDetailId = null;
 
-// 3. INITIALIZATION
+// --- 3. INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
     checkLoginState();
     setupEventListeners();
+    initChatbot(); // Restored Chatbot
+    enableDraggableModals(); // Restored Dragging
 });
 
+// --- 4. MAP & LAYERS ---
 function initMap() {
     map = L.map('map').setView([DEFAULT_CENTER.lat, DEFAULT_CENTER.lng], 13);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    
+    osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors'
     }).addTo(map);
+    
+    satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '© Esri, Maxar'
+    });
 
+    updateMapRadius(1);
     fetchShops();
     map.on('click', onMapClick);
 }
 
-// 4. AUTHENTICATION
+function setBasemap(layerName) {
+    if (currentLayer === layerName) return;
+    if (layerName === 'osm') {
+        if (map.hasLayer(satelliteLayer)) map.removeLayer(satelliteLayer);
+        map.addLayer(osmLayer);
+        currentLayer = 'osm';
+        document.getElementById('setOsmMap').classList.add('active');
+        document.getElementById('setSatelliteMap').classList.remove('active');
+    } else {
+        if (map.hasLayer(osmLayer)) map.removeLayer(osmLayer);
+        map.addLayer(satelliteLayer);
+        currentLayer = 'satellite';
+        document.getElementById('setOsmMap').classList.remove('active');
+        document.getElementById('setSatelliteMap').classList.add('active');
+    }
+}
+
+// --- 5. AUTHENTICATION (Cloud Connected) ---
 async function login(username, password) {
     try {
         const response = await fetch(`${AUTH_URL}/login`, {
@@ -97,7 +130,7 @@ function checkLoginState() {
     }
 }
 
-// 5. SHOPS
+// --- 6. SHOPS & DATA (Cloud Connected) ---
 async function fetchShops() {
     try {
         const response = await fetch(API_URL);
@@ -114,11 +147,11 @@ async function fetchShops() {
                 ${shop.phone}<br>
                 ${currentUser && (currentUser.role === 'admin' || currentUser.id == shop.owner_id) ? 
                 `<button onclick="deleteShop(${shop.id})" style="color:red">Delete</button>` : ''}
+                <br><button onclick="routeToShop(${shop.lat}, ${shop.lng})" style="margin-top:5px;">Get Directions</button>
             `);
             markers.push(marker);
         });
         
-        // Update Admin Count if open
         const countSpan = document.getElementById('adminTotalShops');
         if(countSpan) countSpan.innerText = shops.length;
 
@@ -155,55 +188,219 @@ async function deleteShop(id) {
     fetchShops();
 }
 
-// 6. ADMIN PANEL LOGIC (NEW)
+// --- 7. ADMIN PANEL (Cloud Connected) ---
 async function openAdminPanel() {
     if(!currentUser || currentUser.role !== 'admin') return alert("Access Denied");
     
     openModal('adminModal');
     
-    // 1. Get Users Count
     try {
         const res = await fetch(`${AUTH_URL}/users`);
         const users = await res.json();
-        document.getElementById('adminTotalUsers').innerText = users.length;
+        const userCountSpan = document.getElementById('adminTotalUsers');
+        if(userCountSpan) userCountSpan.innerText = users.length;
         
-        // Setup User List Click
-        document.getElementById('statUsers').onclick = () => renderAdminUserList(users);
+        const statUsersBtn = document.getElementById('statUsers');
+        if(statUsersBtn) statUsersBtn.onclick = () => renderAdminUserList(users);
     } catch(e) { console.error(e); }
     
-    // 2. Shops Count
-    fetchShops(); // Refresh shops to get count
+    fetchShops();
 }
 
 function renderAdminUserList(users) {
     const container = document.getElementById('adminListContainer');
     const section = document.getElementById('adminListSection');
-    section.style.display = 'block';
-    container.innerHTML = '';
-    
-    users.forEach(user => {
-        const div = document.createElement('div');
-        div.style.padding = "10px";
-        div.style.borderBottom = "1px solid #ccc";
-        div.style.display = "flex";
-        div.style.justifyContent = "space-between";
-        
-        div.innerHTML = `
-            <span><b>${user.username}</b> (${user.role})</span>
-            ${user.username !== 'admin' ? 
-            `<button onclick="deleteUser(${user.id})" style="background:red; color:white; border:none; padding:5px;">Delete</button>` : ''}
-        `;
-        container.appendChild(div);
-    });
+    if(section) section.style.display = 'block';
+    if(container) {
+        container.innerHTML = '';
+        users.forEach(user => {
+            const div = document.createElement('div');
+            div.className = 'admin-list-item';
+            div.style.padding = "10px";
+            div.style.borderBottom = "1px solid #ccc";
+            div.style.display = "flex";
+            div.style.justifyContent = "space-between";
+            div.innerHTML = `
+                <span><b>${user.username}</b> (${user.role})</span>
+                ${user.username !== 'admin' ? 
+                `<button onclick="deleteUser(${user.id})" style="color:red;">Delete</button>` : ''}
+            `;
+            container.appendChild(div);
+        });
+    }
 }
 
 async function deleteUser(id) {
     if(!confirm("Delete this user?")) return;
     await fetch(`${AUTH_URL}/users/${id}`, { method: 'DELETE' });
-    openAdminPanel(); // Refresh
+    openAdminPanel();
 }
 
-// 7. UI HELPER FUNCTIONS
+// --- 8. VOICE & ROUTING (Restored from Old Code) ---
+function toggleVoiceNavigation() {
+    isVoiceEnabled = !isVoiceEnabled;
+    const btn = document.getElementById('voiceToggleBtn');
+    if (isVoiceEnabled) {
+        btn.classList.add('active-voice');
+        btn.innerHTML = '<i class="fas fa-volume-up"></i>';
+        const utterance = new SpeechSynthesisUtterance("Voice navigation enabled.");
+        window.speechSynthesis.speak(utterance);
+    } else {
+        btn.classList.remove('active-voice');
+        btn.innerHTML = '<i class="fas fa-volume-mute"></i>';
+        window.speechSynthesis.cancel();
+    }
+}
+
+function locateUser() {
+    if (!navigator.geolocation) return alert('Geolocation not supported');
+    navigator.geolocation.getCurrentPosition(pos => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        userLocation = { lat, lng };
+        map.setView([lat, lng], 16);
+        if(window.userMarker) map.removeLayer(window.userMarker);
+        window.userMarker = L.marker([lat, lng]).addTo(map).bindPopup("You are here").openPopup();
+    }, () => alert('Unable to get location'));
+}
+
+function routeToShop(lat, lng) {
+    if (!userLocation) {
+        alert("Please click 'Locate Me' (Arrow Icon) first.");
+        return;
+    }
+    
+    if (routingControl) map.removeControl(routingControl);
+    
+    routingControl = L.Routing.control({
+        waypoints: [
+            L.latLng(userLocation.lat, userLocation.lng),
+            L.latLng(lat, lng)
+        ],
+        lineOptions: { styles: [{color: '#667eea', opacity: 1, weight: 5}] },
+        createMarker: function() { return null; } // Hide default routing markers
+    }).addTo(map);
+    
+    routingControl.on('routesfound', function(e) {
+        if (isVoiceEnabled && e.routes && e.routes.length > 0) {
+            const summary = e.routes[0].summary;
+            const dist = (summary.totalDistance / 1000).toFixed(1) + " kilometers";
+            const time = Math.round(summary.totalTime / 60) + " minutes";
+            const utterance = new SpeechSynthesisUtterance(`Route calculated. Destination is ${dist} away. Travel time is about ${time}.`);
+            window.speechSynthesis.speak(utterance);
+        }
+    });
+}
+
+function updateMapRadius(radiusKm) {
+    if (searchRadiusCircle) map.removeLayer(searchRadiusCircle);
+    searchRadiusCircle = L.circle([DEFAULT_CENTER.lat, DEFAULT_CENTER.lng], { 
+        color: '#667eea', 
+        fillColor: '#667eea', 
+        fillOpacity: 0.15, 
+        radius: radiusKm * 1000 
+    }).addTo(map);
+}
+
+// --- 9. CHATBOT (Fully Restored with Image Paste) ---
+function initChatbot() {
+    const toggleBtn = document.getElementById('chatbotToggle');
+    const chatWindow = document.getElementById('chatWindow');
+    const closeBtn = document.getElementById('closeChatBtn');
+    const sendBtn = document.getElementById('sendChatBtn');
+    const input = document.getElementById('chatInput');
+
+    if(toggleBtn) toggleBtn.onclick = () => chatWindow.classList.toggle('open');
+    if(closeBtn) closeBtn.onclick = () => chatWindow.classList.remove('open');
+    if(sendBtn) sendBtn.onclick = handleUserSend;
+    if(input) input.onkeypress = (e) => { if (e.key === 'Enter') handleUserSend(); };
+
+    // Image Paste Handler
+    input.addEventListener('paste', function(e) {
+        const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+        for (let index in items) {
+            const item = items[index];
+            if (item.kind === 'file' && item.type.includes('image/')) {
+                const blob = item.getAsFile();
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const imgUrl = event.target.result;
+                    appendMessage(`<img src="${imgUrl}" style="max-width:100%">`, 'user-msg');
+                    setTimeout(() => appendMessage("I see your screenshot! 🧐", 'bot-msg'), 600);
+                };
+                reader.readAsDataURL(blob);
+            }
+        }
+    });
+
+    function handleUserSend() {
+        const text = input.value.trim();
+        if (!text) return;
+        appendMessage(text, 'user-msg');
+        input.value = '';
+        setTimeout(() => {
+            const response = processChatCommand(text.toLowerCase());
+            appendMessage(response, 'bot-msg');
+        }, 500);
+    }
+
+    function appendMessage(text, className) {
+        const div = document.createElement('div');
+        div.className = `message-bubble ${className}`;
+        div.innerHTML = text;
+        document.getElementById('chatMessages').appendChild(div);
+        div.scrollIntoView({behavior: "smooth"});
+    }
+}
+
+function processChatCommand(cmd) {
+    if (cmd.includes('plumber')) return "I can filter for Plumbers! Use the dropdown on the left.";
+    if (cmd.includes('mechanic')) return "Looking for Mechanics? Check the 'Service Type' filter.";
+    if (cmd.includes('voice')) return "Click the Speaker icon on the map to enable Voice Navigation.";
+    if (cmd.includes('admin')) return "Login as 'admin' to see the Admin Panel.";
+    if (cmd.includes('hello') || cmd.includes('hi')) return "Hi there! I am ServiceBot. How can I help?";
+    return "I can help with shops, voice nav, or filters. Try asking 'Where are plumbers?'";
+}
+
+// --- 10. DRAGGABLE MODALS (Restored) ---
+function enableDraggableModals() {
+    const modals = document.querySelectorAll('.modal');
+    modals.forEach(modal => {
+        const header = modal.querySelector('.modal-header');
+        const content = modal.querySelector('.modal-content');
+        if (header && content) setupDragLogic(header, content);
+    });
+}
+
+function setupDragLogic(handle, target) {
+    let isDragging = false, startX, startY, startLeft, startTop;
+    handle.onmousedown = (e) => {
+        isDragging = true;
+        handle.style.cursor = 'grabbing';
+        const rect = target.getBoundingClientRect();
+        target.style.position = 'fixed';
+        target.style.margin = '0';
+        target.style.left = rect.left + 'px';
+        target.style.top = rect.top + 'px';
+        startX = e.clientX; startY = e.clientY;
+        startLeft = rect.left; startTop = rect.top;
+        document.onmousemove = onMouseMove;
+        document.onmouseup = onMouseUp;
+    };
+    function onMouseMove(e) {
+        if (!isDragging) return;
+        target.style.left = (startLeft + e.clientX - startX) + 'px';
+        target.style.top = (startTop + e.clientY - startY) + 'px';
+    }
+    function onMouseUp() {
+        isDragging = false;
+        handle.style.cursor = 'move';
+        document.onmousemove = null;
+        document.onmouseup = null;
+    }
+}
+
+// --- 11. UI HELPERS & LISTENERS ---
 function onMapClick(e) {
     if (!currentUser || (currentUser.role !== 'provider' && currentUser.role !== 'admin')) return;
     
@@ -233,10 +430,7 @@ function updateUIForUser() {
         loggedInView.style.display = 'block';
         welcomeUser.innerText = `Hi, ${currentUser.username}`;
         
-        // Show Add Shop for Provider/Admin
         if (addBtn) addBtn.style.display = (currentUser.role === 'provider' || currentUser.role === 'admin') ? 'inline-block' : 'none';
-        
-        // Show Admin Panel Button for Admin
         if (adminBtn) adminBtn.style.display = (currentUser.role === 'admin') ? 'inline-block' : 'none';
         
     } else {
@@ -252,14 +446,20 @@ function setupEventListeners() {
     document.getElementById('registerBtnNav').onclick = () => openModal('registerModal');
     document.getElementById('logoutBtn').onclick = logout;
     
-    // Admin Panel Button Listener
     const adminBtn = document.getElementById('adminPanelBtn');
     if(adminBtn) adminBtn.onclick = openAdminPanel;
 
-    document.querySelectorAll('.close').forEach(span => {
-        span.onclick = function() { this.closest('.modal').style.display = 'none'; }
-    });
-
+    // Map Controls (RESTORED)
+    document.getElementById('locateMe').onclick = locateUser;
+    document.getElementById('setOsmMap').onclick = () => setBasemap('osm');
+    document.getElementById('setSatelliteMap').onclick = () => setBasemap('satellite');
+    document.getElementById('voiceToggleBtn').onclick = toggleVoiceNavigation;
+    document.getElementById('resetMapBtn').onclick = () => {
+        map.setView([DEFAULT_CENTER.lat, DEFAULT_CENTER.lng], 13);
+        updateMapRadius(1);
+    };
+    
+    // Forms
     document.getElementById('loginForm').onsubmit = (e) => {
         e.preventDefault();
         login(document.getElementById('loginUsername').value, document.getElementById('loginPassword').value);
@@ -289,6 +489,10 @@ function setupEventListeners() {
          alert("Click the map to pick a location!");
          closeModal('addProviderModal');
     };
+
+    document.querySelectorAll('.close').forEach(span => {
+        span.onclick = function() { this.closest('.modal').style.display = 'none'; }
+    });
 }
 
 function openModal(id) {
@@ -304,3 +508,4 @@ function closeModal(id) {
 window.deleteShop = deleteShop;
 window.deleteUser = deleteUser;
 window.renderAdminUserList = renderAdminUserList;
+window.routeToShop = routeToShop;
