@@ -1,21 +1,24 @@
 // ==================================================
-// SERVICEPRO CORRECTED SCRIPT.JS (Matches your HTML)
+// SERVICEPRO FINAL SCRIPT.JS (Connected & Fixed)
 // ==================================================
 
-// --- 1. CONFIGURATION ---
-const API_URL = 'https://0691fb63-24ec-4728-85ea-05b3b2145c59-00-3njhq9444p5wr.pike.replit.dev/api/shops';
-const REQUEST_URL = 'https://0691fb63-24ec-4728-85ea-05b3b2145c59-00-3njhq9444p5wr.pike.replit.dev/api/requests';
+// 1. CONFIGURATION
+// I have put your exact Replit URL here:
+const BASE_URL = 'https://0691fb63-24ec-4728-85ea-05b3b2145c59-00-3njhq9444p5wr.pike.replit.dev'; 
+
+const API_URL = `${BASE_URL}/api/shops`;
+const AUTH_URL = `${BASE_URL}/api`; 
 
 const DEFAULT_CENTER = { lat: 31.4880, lng: 74.3430 }; // Lahore
 const CURRENT_USER_KEY = 'serviceCurrentUser';
 
-// --- 2. GLOBAL VARIABLES ---
+// 2. GLOBAL VARIABLES
 let map;
 let markers = [];
 let currentUser = null;
 let tempMarker = null; 
 
-// --- 3. INITIALIZATION ---
+// 3. INITIALIZATION
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
     checkLoginState();
@@ -24,29 +27,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initMap() {
     map = L.map('map').setView([DEFAULT_CENTER.lat, DEFAULT_CENTER.lng], 13);
-
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
     fetchShops();
-
-    // Map Click Listener (For adding shops)
     map.on('click', onMapClick);
 }
 
-// --- 4. CLOUD AUTHENTICATION ---
-
+// 4. AUTHENTICATION
 async function login(username, password) {
-    const baseUrl = API_URL.replace('/api/shops', '');
-    
     try {
-        const response = await fetch(`${baseUrl}/api/login`, {
+        const response = await fetch(`${AUTH_URL}/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password })
         });
-        
         const data = await response.json();
         
         if (response.ok) {
@@ -55,26 +51,23 @@ async function login(username, password) {
             updateUIForUser();
             closeModal('loginModal');
             document.getElementById('loginForm').reset();
-            alert(`Welcome back, ${currentUser.role}!`);
+            alert(`Welcome, ${currentUser.username}!`);
         } else {
             alert(data.error || "Login failed");
         }
     } catch (error) {
         console.error(error);
-        alert("Network Error: Is Replit Running?");
+        alert("Network Error: Replit might be asleep. Go to Replit and click Run.");
     }
 }
 
 async function register(username, password, role, question, answer) {
-    const baseUrl = API_URL.replace('/api/shops', '');
-    
     try {
-        const response = await fetch(`${baseUrl}/api/register`, {
+        const response = await fetch(`${AUTH_URL}/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password, role, question, answer })
         });
-        
         const data = await response.json();
         
         if (response.ok) {
@@ -97,7 +90,7 @@ function logout() {
     currentUser = null;
     localStorage.removeItem(CURRENT_USER_KEY);
     updateUIForUser();
-    alert("Logged out successfully.");
+    alert("Logged out.");
 }
 
 function checkLoginState() {
@@ -108,11 +101,11 @@ function checkLoginState() {
     }
 }
 
-// --- 5. SHOP FUNCTIONS ---
-
+// 5. SHOPS
 async function fetchShops() {
     try {
         const response = await fetch(API_URL);
+        if (!response.ok) throw new Error("Failed to fetch");
         const shops = await response.json();
         
         markers.forEach(m => map.removeLayer(m));
@@ -120,181 +113,128 @@ async function fetchShops() {
 
         shops.forEach(shop => {
             const marker = L.marker([shop.lat, shop.lng]).addTo(map);
-            
-            const popupContent = `
-                <div class="popup-content">
-                    <h3>${shop.name}</h3>
-                    <p><strong>Service:</strong> ${shop.service}</p>
-                    <p><strong>Phone:</strong> ${shop.phone}</p>
-                    <p>${shop.description}</p>
-                    ${currentUser && currentUser.role === 'user' ? 
-                      `<button onclick="requestService('${shop.id}', '${shop.name}')" class="btn-primary" style="margin-top:5px;">Request Service</button>` : ''}
-                    ${currentUser && (currentUser.id == shop.ownerId || currentUser.username === 'admin') ? 
-                      `<button onclick="deleteShop(${shop.id})" class="btn-danger" style="margin-top:5px;">Delete</button>` : ''}
-                </div>
-            `;
-            
-            marker.bindPopup(popupContent);
+            marker.bindPopup(`
+                <b>${shop.name}</b><br>
+                ${shop.service}<br>
+                ${shop.phone}<br>
+                ${currentUser && currentUser.id == shop.owner_id ? 
+                `<button onclick="deleteShop(${shop.id})" style="color:red">Delete</button>` : ''}
+            `);
             markers.push(marker);
         });
-    } catch (error) {
-        console.error("Error loading shops:", error);
-    }
+    } catch (error) { console.error("Error loading shops:", error); }
 }
 
 async function addShop(name, service, phone, address, desc, lat, lng) {
-    if (!currentUser) return alert("Please login first");
-
-    const newShop = {
-        ownerId: currentUser.id,
-        name: name,
-        service: service,
-        phone: phone,
-        address: address,
-        description: desc,
-        lat: lat,
-        lng: lng
-    };
-
+    if (!currentUser) return alert("Login first");
+    
     try {
         const response = await fetch(API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newShop)
+            body: JSON.stringify({
+                ownerId: currentUser.id,
+                name, service, phone, address, description: desc, lat, lng
+            })
         });
 
         if (response.ok) {
-            alert("Shop Added to Cloud!");
-            closeModal('addProviderModal');
-            fetchShops(); 
+            alert("Shop Added!");
+            closeModal('addProviderModal'); 
+            fetchShops();
             if (tempMarker) map.removeLayer(tempMarker);
         } else {
-            alert("Failed to save shop.");
+            alert("Failed to add shop");
         }
-    } catch (error) {
-        console.error(error);
-        alert("Error saving shop.");
-    }
+    } catch (e) { console.error(e); }
 }
 
 async function deleteShop(id) {
-    if (!confirm("Are you sure you want to delete this shop?")) return;
-    try {
-        const response = await fetch(`${API_URL}/${id}`, { method: 'DELETE' });
-        if (response.ok) {
-            alert("Shop Deleted");
-            fetchShops();
-        } else {
-            alert("Failed to delete");
-        }
-    } catch (error) { console.error(error); }
+    if(!confirm("Delete this shop?")) return;
+    await fetch(`${API_URL}/${id}`, { method: 'DELETE' });
+    fetchShops();
 }
 
-// --- 6. MAP INTERACTION ---
-
+// 6. MAP CLICK & UI
 function onMapClick(e) {
-    // Only providers can click to add
     if (!currentUser || (currentUser.role !== 'provider' && currentUser.role !== 'admin')) return;
     
-    // Check if modal is already open to prevent accidental clicks
-    if(document.getElementById('addProviderModal').style.display === 'block') return;
-
     const lat = e.latlng.lat;
     const lng = e.latlng.lng;
     
     if (tempMarker) map.removeLayer(tempMarker);
     tempMarker = L.marker([lat, lng]).addTo(map).bindPopup("New Location").openPopup();
     
-    // Fill the hidden inputs in YOUR specific HTML form
-    document.getElementById('inputLat').value = lat;
-    document.getElementById('inputLng').value = lng;
+    // FILLING THE CORRECT HTML INPUTS
+    const latInput = document.getElementById('inputLat'); 
+    const lngInput = document.getElementById('inputLng'); 
+    if(latInput) latInput.value = lat;
+    if(lngInput) lngInput.value = lng;
     
-    openModal('addProviderModal');
+    openModal('addProviderModal'); 
 }
 
-// --- 7. UI HELPER FUNCTIONS ---
-
 function updateUIForUser() {
-    // Correct IDs based on your HTML
     const loggedOutView = document.getElementById('loggedOutView');
     const loggedInView = document.getElementById('loggedInView');
     const welcomeUser = document.getElementById('welcomeUser');
-    const addProviderBtn = document.getElementById('addProviderBtn');
+    const addBtn = document.getElementById('addProviderBtn');
 
     if (currentUser) {
-        loggedOutView.style.display = 'none';
-        loggedInView.style.display = 'block'; // Show the logged-in container
-        welcomeUser.innerText = `Hi, ${currentUser.username}`;
+        if(loggedOutView) loggedOutView.style.display = 'none';
+        if(loggedInView) loggedInView.style.display = 'block';
+        if(welcomeUser) welcomeUser.innerText = `Hi, ${currentUser.username}`;
         
-        // Only Providers see "Add Shop"
-        if (currentUser.role === 'provider' || currentUser.role === 'admin') {
-            addProviderBtn.style.display = 'inline-block';
-        } else {
-            addProviderBtn.style.display = 'none';
+        if (addBtn) {
+            addBtn.style.display = (currentUser.role === 'provider' || currentUser.role === 'admin') ? 'inline-block' : 'none';
         }
     } else {
-        loggedOutView.style.display = 'block';
-        loggedInView.style.display = 'none';
-        addProviderBtn.style.display = 'none';
+        if(loggedOutView) loggedOutView.style.display = 'block';
+        if(loggedInView) loggedInView.style.display = 'none';
+        if(addBtn) addBtn.style.display = 'none';
     }
 }
 
-function openModal(id) {
-    const modal = document.getElementById(id);
-    if(modal) modal.style.display = 'block';
-}
-
-function closeModal(id) {
-    const modal = document.getElementById(id);
-    if(modal) modal.style.display = 'none';
-}
-
-// --- 8. EVENT LISTENERS ---
-
+// 7. LISTENERS
 function setupEventListeners() {
-    // 1. Navigation Buttons (Corrected IDs)
-    document.getElementById('loginBtnNav').onclick = () => openModal('loginModal');
-    document.getElementById('registerBtnNav').onclick = () => openModal('registerModal');
-    document.getElementById('logoutBtn').onclick = logout;
+    // Nav Buttons
+    const loginBtn = document.getElementById('loginBtnNav');
+    const regBtn = document.getElementById('registerBtnNav');
+    const logoutBtn = document.getElementById('logoutBtn');
     
-    // 2. Add Shop Button
-    const addBtn = document.getElementById('addProviderBtn');
-    if(addBtn) {
-        addBtn.onclick = () => {
-            alert("Click on the map to set your shop location!");
-            closeModal('addProviderModal');
-        };
-    }
+    if(loginBtn) loginBtn.onclick = () => openModal('loginModal');
+    if(regBtn) regBtn.onclick = () => openModal('registerModal');
+    if(logoutBtn) logoutBtn.onclick = logout;
 
-    // 3. Close Modals (The 'x' buttons)
+    // Close Modals
     document.querySelectorAll('.close').forEach(span => {
-        span.onclick = function() {
-            // Closes the closest modal parent
-            this.closest('.modal').style.display = 'none';
-        }
+        span.onclick = function() { this.closest('.modal').style.display = 'none'; }
     });
 
-    // 4. Login Form Submit
-    document.getElementById('loginForm').onsubmit = (e) => {
+    // Login Submit
+    const loginForm = document.getElementById('loginForm');
+    if(loginForm) loginForm.onsubmit = (e) => {
         e.preventDefault();
-        const u = document.getElementById('loginUsername').value; // Corrected ID
-        const p = document.getElementById('loginPassword').value; // Corrected ID
+        const u = document.getElementById('loginUsername').value;
+        const p = document.getElementById('loginPassword').value;
         login(u, p);
     };
 
-    // 5. Register Form Submit
-    document.getElementById('registerForm').onsubmit = (e) => {
+    // Register Submit
+    const regForm = document.getElementById('registerForm');
+    if(regForm) regForm.onsubmit = (e) => {
         e.preventDefault();
-        const u = document.getElementById('regUsername').value; // Corrected ID
-        const p = document.getElementById('regPassword').value; // Corrected ID
+        const u = document.getElementById('regUsername').value;
+        const p = document.getElementById('regPassword').value;
         const r = document.getElementById('regRole').value;
         const q = document.getElementById('regQuestion').value;
         const a = document.getElementById('regAnswer').value;
         register(u, p, r, q, a);
     };
 
-    // 6. Add Shop Form Submit
-    document.getElementById('providerForm').onsubmit = (e) => {
+    // Add Shop Submit
+    const providerForm = document.getElementById('providerForm');
+    if(providerForm) providerForm.onsubmit = (e) => {
         e.preventDefault();
         const name = document.getElementById('providerName').value;
         const service = document.getElementById('providerService').value;
@@ -304,35 +244,22 @@ function setupEventListeners() {
         const lat = document.getElementById('inputLat').value;
         const lng = document.getElementById('inputLng').value;
 
-        if (!lat || !lng) {
-            alert("Please click on the map to set location first!");
-            return;
-        }
         addShop(name, service, phone, address, desc, lat, lng);
+    };
+    
+    // Add Shop Button (Manual Click)
+    const manualAddBtn = document.getElementById('addProviderBtn');
+    if(manualAddBtn) manualAddBtn.onclick = () => {
+         alert("Click the map to pick a location!");
+         closeModal('addProviderModal');
     };
 }
 
-// Global scope request function
-window.requestService = async function(shopId, shopName) {
-    if (!currentUser) return alert("Please login to request service");
-    const address = prompt("Enter your address:");
-    if (!address) return;
-    
-    // Simplified Request
-    try {
-        const res = await fetch(REQUEST_URL, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                providerId: shopId, 
-                name: currentUser.username,
-                phone: "000-0000", 
-                address: address,
-                lat: DEFAULT_CENTER.lat,
-                lng: DEFAULT_CENTER.lng
-            })
-        });
-        if (res.ok) alert("Request Sent!");
-        else alert("Failed to send request");
-    } catch(e) { console.error(e); }
-};
+function openModal(id) {
+    const el = document.getElementById(id);
+    if(el) el.style.display = 'block';
+}
+function closeModal(id) {
+    const el = document.getElementById(id);
+    if(el) el.style.display = 'none';
+}
