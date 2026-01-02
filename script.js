@@ -510,3 +510,4 @@ window.deleteUser = deleteUser;
 window.renderAdminUserList = renderAdminUserList;
 window.routeToShop = routeToShop;
 
+
